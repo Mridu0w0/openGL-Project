@@ -22,6 +22,7 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import *
 import sys, random, time, math
 
+
 # -------- Window / Scene ----------
 W_WIDTH, W_HEIGHT = 1200, 1000
 BOARD_N = 10              # 10x10
@@ -71,7 +72,13 @@ BONUS_TILES = {
     82: ("forward", 4)
 }
 
-
+# Board themes: list of (light_color, dark_color, border_color)
+THEMES = [
+    ((0.95,0.90,0.80),(0.75,0.70,0.60),(0.2,0.2,0.2)),  # classic
+    ((0.98,0.94,0.86),(0.85,0.72,0.55),(0.35,0.22,0.05)),  # desert
+    ((0.12,0.12,0.18),(0.18,0.18,0.26),(0.05,0.05,0.12)),  # night
+]
+theme_idx = 0
 
 # Time
 last_time = time.time()
@@ -237,6 +244,29 @@ def draw_token(cell, color):
     x, z = cell_to_world(cell)
     draw_token_at(x, z, color)
 
+def draw_snake_line(from_cell, to_cell, col=(0.2, 0.8, 0.2)):
+    x1, z1 = cell_to_world(from_cell)
+    x2, z2 = cell_to_world(to_cell)
+    dx, dz = x2 - x1, z2 - z1
+    segs = 14
+    glColor3f(*col)
+    for k in range(segs+1):
+        t = k / float(segs)
+        ox = -dz * 0.07 * math.sin(t*math.pi*2)
+        oz =  dx * 0.07 * math.sin(t*math.pi*2)
+        x = x1 + dx*t + ox
+        z = z1 + dz*t + oz
+        glPushMatrix()
+        glTranslatef(x, BOARD_Y + 0.12 + 0.03*math.sin(t*math.pi*2), z)
+        r = 0.10 + 0.03*math.sin(t*math.pi)
+        glutSolidSphere(r, 16, 10)
+        glPopMatrix()
+    glPushMatrix()
+    glTranslatef(x1, BOARD_Y + 0.25, z1)
+    glColor3f(0.1,0.6,0.1)
+    glutSolidSphere(0.22, 16, 12)
+    glPopMatrix()
+
 
 def draw_ladder(from_cell, to_cell, col=(0.7,0.5,0.2)):
     x1, z1 = cell_to_world(from_cell)
@@ -273,6 +303,12 @@ def draw_ladder(from_cell, to_cell, col=(0.7,0.5,0.2)):
             glPopMatrix()
     rail(x1, z1, x2, z2, spacing=0.12)
     rail(x1, z1, x2, z2, spacing=-0.12)
+
+def draw_all_snakes_ladders():
+    for head, tail in SNAKES.items():
+        draw_snake_line(head, tail)
+    for base, top in LADDERS.items():
+        draw_ladder(base, top)
 
 
 def draw_dice_preview():
@@ -351,6 +387,33 @@ def apply_snake_or_ladder(cell):
     if cell in LADDERS: return LADDERS[cell], 'ladder'
     return cell, None
 
+def on_step_finished():
+    global animating, anim_path, anim_t, anim_mode, current_player
+    p = players[current_player]
+    final_cell = p["pos"]
+    # apply bonus tiles first? We'll apply snakes/ladders then bonus tiles
+    new_cell, mode = apply_snake_or_ladder(final_cell)
+    if mode == 'snake':
+        # prepare snake curve animation from head(final_cell) to tail(new_cell)
+        anim_mode = 'snake'
+        anim_path = make_snake_curve(final_cell, new_cell, segs=80)
+        animating = True
+        anim_t = 0.0
+    elif mode == 'ladder':
+        anim_mode = 'ladder'
+        anim_path = make_ladder_path(final_cell, new_cell, rung_count=6)
+        animating = True
+        anim_t = 0.0
+    else:
+        # check bonus tiles
+        if final_cell in BONUS_TILES:
+            btype, val = BONUS_TILES[final_cell]
+            handle_bonus_tile(btype, val)
+            # if extra_roll we leave turn unchanged (player will roll again)
+            if btype == 'extra_roll':
+                return
+        end_turn_or_win()
+
       
 def preview_dice():
     global last_rolls
@@ -358,6 +421,22 @@ def preview_dice():
         last_rolls = [random.randint(1,6), random.randint(1,6)]
     else:
         last_rolls = [random.randint(1,6)]
+
+def handle_bonus_tile(btype, val):
+    global last_roll, animating, anim_path, anim_t
+    if btype == 'extra_roll':
+        # immediately allow another roll (no movement scheduled)
+        pass
+    elif btype == 'forward':
+        p = players[current_player]
+        start = p["pos"]
+        target = clamp(start + val, 1, 100)
+        anim_path = make_step_path(start, target)
+        animating = len(anim_path) > 0
+        anim_mode = 'steps'
+        anim_t = 0.0
+    elif btype == 'skip':
+        players[current_player]['skip'] = True
 
 
 def end_turn_or_win():
@@ -377,6 +456,72 @@ def end_turn_or_win():
         else:
             # single-player mode: always stay Player 1
             current_player = 0
+
+
+def update_animation(dt):
+    global anim_t, animating, anim_path, anim_mode, last_roll
+    if not animating: return
+    if anim_mode == 'steps':
+        if not anim_path:
+            animating = False
+            on_step_finished()
+            return
+        frm, to = anim_path[0]
+        anim_t += anim_speed * dt
+        while anim_t >= 1.0 and anim_path:
+            players[current_player]["pos"] = to
+            anim_t -= 1.0
+            anim_path.pop(0)
+            if not anim_path:
+                animating = False
+                on_step_finished()
+                return
+    elif anim_mode == 'snake':
+        # anim_path is list of world points; we move along them
+        seg_len = 1.0 / max(1, len(anim_path)-1)
+        anim_t += 1.4 * dt  # snake slower
+        posf = anim_t
+        idxf = posf / seg_len
+        idx_int = int(idxf)
+        if idx_int >= len(anim_path)-1:
+            # finish: set player pos to tail cell
+            # find tail cell from last world point -> map to nearest cell
+            tail_world = anim_path[-1]
+            # nearest cell number
+            # naive: find cell whose world coords match tail approx
+            # compute all cell centers and pick closest
+            best = None; bestd = 1e9; bestcell = players[current_player]["pos"]
+            for c in range(1, 101):
+                wx, wz = cell_to_world(c)
+                d = (wx - tail_world[0])**2 + (wz - tail_world[2])**2
+                if d < bestd:
+                    bestd = d; bestcell = c
+            players[current_player]["pos"] = bestcell
+            animating = False
+            anim_mode = None
+            on_step_finished()
+            return
+    elif anim_mode == 'ladder':
+        # climb rung-by-rung
+        seg_len = 1.0 / max(1, len(anim_path)-1)
+        anim_t += 2.2 * dt  # ladder quicker
+        posf = anim_t
+        idxf = posf / seg_len
+        idx_int = int(idxf)
+        if idx_int >= len(anim_path)-1:
+            # finish: set pos to top cell
+            top_world = anim_path[-1]
+            best = None; bestd = 1e9; bestcell = players[current_player]["pos"]
+            for c in range(1, 101):
+                wx, wz = cell_to_world(c)
+                d = (wx - top_world[0])**2 + (wz - top_world[2])**2
+                if d < bestd:
+                    bestd = d; bestcell = c
+            players[current_player]["pos"] = bestcell
+            animating = False
+            anim_mode = None
+            on_step_finished()
+            return
 
 
 def display():
@@ -403,7 +548,7 @@ def display():
         gluLookAt(ex, ey, ez, cx, 0.0, cz, 0,1,0)
 
     draw_board()
-   
+    draw_all_snakes_ladders()
     
     if game_over:
         msg = f"Winner: Player {winner+1}!"
@@ -490,12 +635,67 @@ def draw_status_plates():
     draw_cuboid(0.6, 0.05, 0.4)
     glPopMatrix()
 
+def idle():
+    global last_time, anim_t
+    now = time.time()
+    dt = now - last_time
+    last_time = now
+    if dt > 0.1: dt = 0.1
+    # update anim_t differently per mode
+    if animating:
+        if anim_mode == 'steps':
+            update_animation(dt)
+        elif anim_mode == 'snake':
+            # snake progress along path using anim_t
+            anim_t += 1.4 * dt
+            update_animation(0)  # let update_animation finish when needed
+        elif anim_mode == 'ladder':
+            anim_t += 2.2 * dt
+            update_animation(0)
+    glutPostRedisplay()
+
+def keyboard(key, x, y):
+    global last_roll, game_over, winner, animating, anim_path, anim_t, current_player, top_down, double_dice, theme_idx
+    k = key.decode("utf-8") if isinstance(key, bytes) else key
+    if k in ('\x1b', 'q', 'Q'):
+        sys.exit(0)
+    if k in ('r','R'):
+        restart_game()
+        
+    if k in ('p','P'):
+        global two_players
+        two_players = not two_players
+        if not two_players:
+            current_player = 0
+
+    if k == ' ':
+        if not game_over and not animating:
+            # if player has skip flag, consume and end turn
+            if players[current_player].get('skip', False):
+                players[current_player]['skip'] = False
+                end_turn_or_win()
+                return
+            perform_roll_and_schedule()
+    if k in ('\t',):
+        # top down toggle
+        global top_down
+        top_down = not top_down
+    if k in ('+', '='):
+        zoom(-1)
+    if k in ('-', '_'):
+        zoom(1)
+    if k in ('d','D'):
+        double_dice = not double_dice
+        preview_dice()
+    if k in ('t','T'):
+        theme_idx = (theme_idx + 1) % len(THEMES)
 
 def draw_text(x, y, text, color=(1,1,1)):
     glColor3f(*color)
     glRasterPos2f(x, y)
     for ch in text:
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+
 
 def draw_status_corner():
     global two_players
@@ -545,15 +745,6 @@ def perform_roll_and_schedule():
         last_rolls = [roll]
     schedule_move(current_player, roll)
 
-
-def draw_text(x, y, text, color=(1,1,1)):
-    glColor3f(*color)
-    glRasterPos2f(x, y)
-    for ch in text:
-        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
-
-
-
 def special(key, x, y):
     global cam_angle, cam_tilt
     if key == GLUT_KEY_LEFT: cam_angle += 4.0
@@ -598,7 +789,9 @@ def main():
     init_gl()
     restart_game()
     glutDisplayFunc(display)
+    glutIdleFunc(idle)
     glutReshapeFunc(reshape) 
+    glutKeyboardFunc(keyboard)
     glutSpecialFunc(special)
     glutMainLoop()
 

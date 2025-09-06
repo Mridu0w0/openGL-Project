@@ -12,7 +12,7 @@
 # Adds:
 #  - D: toggle double dice (1 or 2 dice)
 #  - T: toggle board theme
-#  - Bonus tiles (extra roll, forward 3, skip turn)
+#  - Bonus tiles (extra roll, skip turn)
 #  - Snake slide & ladder climb animations (curved / rung-based)
 #  - Winner celebration (spin + bounce)
 # --------------------------------------------------

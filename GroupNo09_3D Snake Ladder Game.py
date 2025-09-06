@@ -62,16 +62,15 @@ double_dice = False   # feature (D) toggle
 
 # Bonus tiles (extra features)
 # Format: cell: ("type", value)
-# types: "extra_roll", "forward", "skip"
+# types: "extra_roll", "skip"
 BONUS_TILES = {
     5: ("extra_roll", None),
-    12: ("forward", 3),
-    27: ("skip", 1),
-    44: ("forward", 2),
-    58: ("extra_roll", None),
-    82: ("forward", 4)
+    12: ("skip", 1),
+    27: ("extra_roll", None),
+    44: ("skip", 1),
+    58: ("skip", 1),
+    82: ("extra_roll", None)
 }
-
 # Board themes: list of (light_color, dark_color, border_color)
 THEMES = [
     ((0.95,0.90,0.80),(0.75,0.70,0.60),(0.2,0.2,0.2)),  # classic

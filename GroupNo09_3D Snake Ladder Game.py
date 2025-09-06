@@ -22,6 +22,7 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import *
 import sys, random, time, math
 
+
 # -------- Window / Scene ----------
 W_WIDTH, W_HEIGHT = 1200, 1000
 BOARD_N = 10              # 10x10
